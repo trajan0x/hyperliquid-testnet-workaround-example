@@ -1,0 +1,434 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HyperCore testnet deposits</title>
+<meta name="description" content="Why USDC bridged to fresh addresses on HyperCore testnet never arrives, a crude workaround, and what we found when we tested it live.">
+<style>
+  :root {
+    --bg: #fbfaf7;
+    --fg: #1d1d1b;
+    --muted: #5f5d57;
+    --line: #c9c5bb;
+    --panel: #f1eee6;
+    --evm: #2f5d8a;
+    --evm-bg: #e3ecf5;
+    --core: #7a4a12;
+    --core-bg: #f6ead8;
+    --ok: #2d6a3e;
+    --ok-bg: #e2f0e5;
+    --bad: #a1322b;
+    --bad-bg: #f7e1de;
+    --link: #2f5d8a;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161614;
+      --fg: #e9e6df;
+      --muted: #a29f97;
+      --line: #4a4842;
+      --panel: #201f1c;
+      --evm: #8fb6dd;
+      --evm-bg: #1c2733;
+      --core: #e0b179;
+      --core-bg: #2e2418;
+      --ok: #8fcf9f;
+      --ok-bg: #1a2a1e;
+      --bad: #ef9a92;
+      --bad-bg: #331c1a;
+      --link: #8fb6dd;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+    font: 17px/1.6 Georgia, "Iowan Old Style", "Times New Roman", serif;
+  }
+  main { max-width: 760px; margin: 0 auto; padding: 40px 16px 80px; }
+  h1 { font-size: 30px; line-height: 1.25; margin: 0 0 8px; }
+  h2 { font-size: 22px; margin: 48px 0 8px; }
+  p { margin: 0 0 14px; }
+  a { color: var(--link); }
+  code { font-family: var(--mono); font-size: 0.85em; background: var(--panel); padding: 1px 4px; border-radius: 3px; overflow-wrap: anywhere; }
+  .sub { color: var(--muted); margin-bottom: 28px; }
+  figure { margin: 22px 0 26px; }
+  figure svg { width: 100%; height: auto; display: block; }
+  figcaption { color: var(--muted); font-size: 15px; margin-top: 8px; }
+  svg text { font-family: -apple-system, "Segoe UI", Helvetica, Arial, sans-serif; fill: var(--fg); }
+  svg .small { font-size: 11px; fill: var(--muted); }
+  svg .label { font-size: 13px; }
+  svg .title { font-size: 13px; font-weight: 600; }
+  svg .mono { font-family: var(--mono); font-size: 11px; }
+  svg .evm { fill: var(--evm-bg); stroke: var(--evm); }
+  svg .core { fill: var(--core-bg); stroke: var(--core); }
+  svg .ok { fill: var(--ok-bg); stroke: var(--ok); }
+  svg .bad { fill: var(--bad-bg); stroke: var(--bad); }
+  svg .plain { fill: var(--panel); stroke: var(--line); }
+  svg .lane { fill: none; stroke: var(--line); stroke-dasharray: 4 4; }
+  svg .arrow { stroke: var(--fg); stroke-width: 1.4; fill: none; marker-end: url(#a); }
+  svg .arrow-bad { stroke: var(--bad); stroke-width: 1.4; fill: none; stroke-dasharray: 5 4; marker-end: url(#ab); }
+  svg .arrow-ok { stroke: var(--ok); stroke-width: 1.4; fill: none; marker-end: url(#ao); }
+  svg .t-evm { fill: var(--evm); } svg .t-core { fill: var(--core); }
+  svg .t-ok { fill: var(--ok); } svg .t-bad { fill: var(--bad); }
+  .table-wrap { overflow-x: auto; }
+  table { border-collapse: collapse; width: 100%; font-size: 15px; margin: 10px 0 18px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-weight: 600; }
+  .yes { color: var(--ok); } .no { color: var(--bad); }
+  footer { margin-top: 56px; color: var(--muted); font-size: 15px; border-top: 1px solid var(--line); padding-top: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>Bridging USDC to fresh addresses on HyperCore testnet</h1>
+<p class="sub">Why deposits vanish, a crude workaround that does work, what did not, and what works for EOAs.
+Code: <a href="https://github.com/trajan0x/hyperliquid-testnet-workaround-example">github.com/trajan0x/hyperliquid-testnet-workaround-example</a></p>
+
+<p>On HyperEVM testnet, <code>CoreDepositWallet.depositFor</code> to a fresh address looks fine on the EVM side. The
+transaction succeeds and the USDC is burned. On HyperCore nothing arrives. This came up in
+<a href="https://discord.com/channels/1029781241702129716/1262879465503981672/1555492643230720081">a Discord question</a>
+and in <a href="https://github.com/hyperliquid-dex/node/issues/138">hyperliquid-dex/node#138</a>
+(<a href="https://github.com/hyperliquid-dex/node/issues/138#issuecomment-5947357512">comment</a>).</p>
+
+<h2>1. Why testnet bridge deposits fail</h2>
+<p>Circle documents two testnet rules
+(<a href="https://developers.circle.com/cctp/concepts/cctp-on-hypercore#testnet-recipient-address-limitations">source</a>).
+The recipient must already exist on HyperCore mainnet. An address that passes can still receive at most 1,000
+testnet USDC. If either check fails, the deposit is dropped without an error.</p>
+
+<figure>
+<svg viewBox="0 0 720 300" role="img" aria-labelledby="f1t">
+  <title id="f1t">Testnet bridge deposit: two checks on HyperCore decide whether the USDC is credited or dropped.</title>
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="currentColor" style="fill: var(--fg)"/></marker>
+    <marker id="ab" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill: var(--bad)"/></marker>
+    <marker id="ao" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" style="fill: var(--ok)"/></marker>
+  </defs>
+  <text x="20" y="22" class="title t-evm">HyperEVM testnet</text>
+  <text x="300" y="22" class="title t-core">HyperCore testnet</text>
+  <line x1="275" y1="10" x2="275" y2="290" class="lane"/>
+
+  <rect x="20" y="45" width="220" height="62" rx="6" class="evm"/>
+  <text x="32" y="68" class="label">depositFor(recipient, amount)</text>
+  <text x="32" y="88" class="small">EVM tx succeeds, USDC burned</text>
+
+  <rect x="300" y="45" width="185" height="62" rx="6" class="plain"/>
+  <text x="312" y="68" class="label">Does recipient exist</text>
+  <text x="312" y="86" class="label">on mainnet Core?</text>
+
+  <rect x="300" y="160" width="185" height="62" rx="6" class="plain"/>
+  <text x="312" y="183" class="label">Net testnet deposits</text>
+  <text x="312" y="201" class="label">still at most 1,000 USDC?</text>
+
+  <rect x="525" y="45" width="175" height="62" rx="6" class="bad"/>
+  <text x="537" y="68" class="label t-bad">Dropped silently</text>
+  <text x="537" y="88" class="small">no error, no balance</text>
+
+  <rect x="525" y="160" width="175" height="62" rx="6" class="bad"/>
+  <text x="537" y="183" class="label t-bad">Dropped silently</text>
+  <text x="537" y="203" class="small">over the testnet cap</text>
+
+  <rect x="300" y="250" width="185" height="40" rx="6" class="ok"/>
+  <text x="312" y="275" class="label t-ok">Credited on Core</text>
+
+  <path d="M240,76 L296,76" class="arrow"/>
+  <path d="M485,76 L521,76" class="arrow-bad"/>
+  <text x="490" y="68" class="small">no</text>
+  <path d="M392,107 L392,156" class="arrow"/>
+  <text x="400" y="136" class="small">yes</text>
+  <path d="M485,191 L521,191" class="arrow-bad"/>
+  <text x="490" y="183" class="small">no</text>
+  <path d="M392,222 L392,246" class="arrow-ok"/>
+  <text x="400" y="240" class="small">yes</text>
+
+  <text x="20" y="150" class="small">A new per-user contract has no</text>
+  <text x="20" y="166" class="small">mainnet history, so it fails the</text>
+  <text x="20" y="182" class="small">first check every time.</text>
+</svg>
+<figcaption>Figure 1. The two checks on testnet. Mainnet has neither.</figcaption>
+</figure>
+
+<h2>2. The workaround: skip the bridge, verify on Core</h2>
+<p>Each user gets a deposit contract at a CREATE2 address with the user as salt. The address is known before
+anything is deployed, and HyperCore will hold funds for it right away. On testnet we fund it with a Core-side
+<code>spotSend</code> from a faucet wallet, so the bridge and its checks are never involved.</p>
+<p>The contract does not believe EVM events. It reads its own spot balance from the <code>spotBalance</code>
+precompile at <code>0x...0801</code>. CoreWriter actions are processed after the EVM block that emits them, so
+the contract checks the result of an action in a later block. Crediting the user works the same way. The sweep
+sends the funds out in one block. A later block confirms they left, and only then is the user credited. The
+user cannot act in between.</p>
+
+<figure>
+<svg viewBox="0 0 720 420" role="img" aria-labelledby="f2t">
+  <title id="f2t">Deposit address flow: Core send, precompile check, CoreWriter action, confirmation in a later block, credit.</title>
+  <text x="20" y="22" class="title t-core">HyperCore</text>
+  <text x="20" y="206" class="title t-evm">HyperEVM (deposit contract)</text>
+  <line x1="10" y1="186" x2="710" y2="186" class="lane"/>
+
+  <rect x="20" y="40" width="190" height="64" rx="6" class="core"/>
+  <text x="32" y="63" class="label">Funder wallet</text>
+  <text x="32" y="83" class="small">spotSend via exchange API</text>
+
+  <rect x="260" y="40" width="200" height="64" rx="6" class="core"/>
+  <text x="272" y="63" class="label">Deposit address balance</text>
+  <text x="272" y="83" class="mono">CREATE2(factory, user)</text>
+
+  <rect x="500" y="40" width="200" height="64" rx="6" class="core"/>
+  <text x="512" y="63" class="label">Main contract on Core</text>
+  <text x="512" y="83" class="small">receives the sweep</text>
+
+  <rect x="260" y="226" width="200" height="72" rx="6" class="evm"/>
+  <text x="272" y="249" class="label">Read spotBalance</text>
+  <text x="272" y="267" class="mono">0x...0801 (self, USDC)</text>
+  <text x="272" y="285" class="small">enough free USDC?</text>
+
+  <rect x="500" y="226" width="200" height="72" rx="6" class="evm"/>
+  <text x="512" y="249" class="label">Block N: sweep()</text>
+  <text x="512" y="267" class="small">snapshot, CoreWriter spotSend,</text>
+  <text x="512" y="285" class="small">lock user actions</text>
+
+  <rect x="260" y="330" width="200" height="72" rx="6" class="evm"/>
+  <text x="272" y="353" class="label">Block N+k: confirmSweep()</text>
+  <text x="272" y="371" class="small">read 0x...0801 again.</text>
+  <text x="272" y="389" class="small">Balance dropped? Then credit.</text>
+
+  <rect x="20" y="348" width="200" height="36" rx="6" class="ok"/>
+  <text x="32" y="371" class="label t-ok">credited[user] += amount</text>
+
+  <path d="M210,72 L256,72" class="arrow"/>
+  <text x="226" y="64" class="small">1</text>
+  <path d="M360,104 L360,222" class="arrow"/>
+  <text x="368" y="150" class="small">2 precompile read</text>
+  <text x="368" y="164" class="small">(no EVM events)</text>
+  <path d="M460,262 L496,262" class="arrow"/>
+  <text x="474" y="254" class="small">3</text>
+  <path d="M600,222 L600,108" class="arrow"/>
+  <text x="608" y="150" class="small">4 CoreWriter action,</text>
+  <text x="608" y="164" class="small">runs after block N</text>
+  <path d="M600,298 L600,366 L464,366" class="arrow"/>
+  <text x="608" y="340" class="small">5 a later block</text>
+  <path d="M260,366 L224,366" class="arrow-ok"/>
+</svg>
+<figcaption>Figure 2. Funds arrive on Core first. The contract only trusts what the precompile shows, and only in a
+block after the action it is checking.</figcaption>
+</figure>
+
+<h2>3. One-time activation</h2>
+<p>The contract starts disabled. To activate it, a small amount (1 USDC here) is sent in through the exchange
+API. The contract sends it back out through CoreWriter and records its balance at that moment. In a later
+block, <code>confirmActivation()</code> checks that the balance dropped by that amount. Only then does the
+contract accept real actions. This proves the contract's CoreWriter path works before anything valuable
+depends on it.</p>
+
+<figure>
+<svg viewBox="0 0 720 230" role="img" aria-labelledby="f3t">
+  <title id="f3t">Activation timeline: inactive, 1 USDC in, contract sends it out, later block confirms, active.</title>
+  <line x1="30" y1="120" x2="700" y2="120" style="stroke: var(--line)"/>
+  <circle cx="60" cy="120" r="6" style="fill: var(--muted)"/>
+  <circle cx="220" cy="120" r="6" style="fill: var(--core)"/>
+  <circle cx="390" cy="120" r="6" style="fill: var(--evm)"/>
+  <circle cx="560" cy="120" r="6" style="fill: var(--ok)"/>
+
+  <text x="30" y="96" class="label">Inactive</text>
+  <text x="30" y="150" class="small">buyHype and sweep</text>
+  <text x="30" y="164" class="small">revert</text>
+
+  <rect x="140" y="30" width="170" height="56" rx="6" class="core"/>
+  <text x="152" y="52" class="label">1 USDC in</text>
+  <text x="152" y="70" class="small">spotSend, exchange API</text>
+
+  <rect x="300" y="150" width="200" height="70" rx="6" class="evm"/>
+  <text x="312" y="172" class="label">Block N</text>
+  <text x="312" y="190" class="small">beginActivation(): snapshot,</text>
+  <text x="312" y="206" class="small">CoreWriter sends 1 USDC out</text>
+
+  <rect x="500" y="30" width="200" height="56" rx="6" class="ok"/>
+  <text x="512" y="52" class="label t-ok">Block N+k: Active</text>
+  <text x="512" y="70" class="small">balance + 1 &lt;= snapshot</text>
+
+  <path d="M225,86 L222,112" class="arrow"/>
+  <path d="M390,128 L390,146" class="arrow"/>
+  <path d="M565,112 L590,90" class="arrow-ok"/>
+  <text x="560" y="150" class="small">If Core rejected the send,</text>
+  <text x="560" y="164" class="small">retry after 300 blocks.</text>
+</svg>
+<figcaption>Figure 3. Activation is a round trip. Money in through the API, out through CoreWriter, confirmed
+by the precompile.</figcaption>
+</figure>
+
+<h2>4. Making the address a "mainnet user" did not help</h2>
+<p>If the only problem is "recipient must exist on mainnet", give it mainnet state. The factory is deployed
+through the deterministic CREATE2 deployer <code>0x4e59...956C</code>, which exists on both chains. Its
+constructor takes only the owner, and per-chain settings go into storage later. So the factory, and every
+deposit address it makes, has the same address on mainnet and testnet. On mainnet we sent the address 2 USDC,
+deployed the replica, and its initializer added an operator API wallet through CoreWriter. That API wallet
+can sign gasless L1 actions for the address.</p>
+<p>All of that worked. Testnet deposits to the address still did not arrive. We then tried real mainnet bridge
+history. We bridged 5 USDC with mainnet <code>depositFor</code> to the deposit address and to a brand-new EOA,
+and both landed on mainnet Core. Testnet deposits to them failed 5 minutes, 40 minutes, and about 24 hours
+later, including after the EOA got a testnet Core account. Our old wallet was credited in seconds every time.
+Whatever testnet checks, we could not create it: a Core account or bridge deposit made the same day does not
+pass. Nothing from the failed deposits ever showed up later.</p>
+
+<figure>
+<svg viewBox="0 0 720 330" role="img" aria-labelledby="f4t">
+  <title id="f4t">Mainnet replica: same factory and deposit address on both chains; mainnet seed and API wallet succeed; testnet deposit still not credited.</title>
+  <text x="20" y="22" class="title">Mainnet (chain 999)</text>
+  <text x="380" y="22" class="title">Testnet (chain 998)</text>
+  <line x1="360" y1="10" x2="360" y2="320" class="lane"/>
+
+  <rect x="20" y="40" width="320" height="50" rx="6" class="plain"/>
+  <text x="32" y="61" class="label">0x4e59...956C deploys factory</text>
+  <text x="32" y="79" class="mono">0x3A1d...514e</text>
+  <rect x="380" y="40" width="320" height="50" rx="6" class="plain"/>
+  <text x="392" y="61" class="label">0x4e59...956C deploys factory</text>
+  <text x="392" y="79" class="mono">0x3A1d...514e (same address)</text>
+
+  <rect x="20" y="110" width="320" height="50" rx="6" class="core"/>
+  <text x="32" y="131" class="label">Seed: Core send, then a real bridge deposit</text>
+  <text x="32" y="149" class="small">userRole goes from missing to user</text>
+
+  <rect x="20" y="180" width="320" height="50" rx="6" class="evm"/>
+  <text x="32" y="201" class="label">deploy(user) runs initializeReplica()</text>
+  <text x="32" y="219" class="small">CoreWriter adds API wallet, seen in extraAgents</text>
+
+  <rect x="20" y="250" width="320" height="50" rx="6" class="ok"/>
+  <text x="32" y="271" class="label t-ok">API wallet acts with no gas</text>
+  <text x="32" y="289" class="small">noop signed for the address; seed returned later</text>
+
+  <rect x="380" y="110" width="320" height="50" rx="6" class="evm"/>
+  <text x="392" y="131" class="label">Same deposit address</text>
+  <text x="392" y="149" class="mono">0xD480...b160</text>
+
+  <rect x="380" y="180" width="320" height="50" rx="6" class="evm"/>
+  <text x="392" y="201" class="label">depositFor(deposit address, 1 USDC)</text>
+  <text x="392" y="219" class="small">tried at +5 min, +40 min and about +24 h</text>
+
+  <rect x="380" y="250" width="320" height="50" rx="6" class="bad"/>
+  <text x="392" y="271" class="label t-bad">Not credited</text>
+  <text x="392" y="289" class="small">new EOA with bridge history also failed</text>
+
+  <path d="M180,90 L180,106" class="arrow"/>
+  <path d="M180,160 L180,176" class="arrow"/>
+  <path d="M180,230 L180,246" class="arrow-ok"/>
+  <path d="M540,90 L540,106" class="arrow"/>
+  <path d="M540,160 L540,176" class="arrow"/>
+  <path d="M540,230 L540,246" class="arrow-bad"/>
+</svg>
+<figcaption>Figure 4. Every mainnet step worked. The step it was meant to enable on testnet did not.</figcaption>
+</figure>
+
+<h2>5. What does work for EOAs: native HYPE</h2>
+<p>The limit is specific to USDC through <code>CoreDepositWallet</code>. We sent 0.01 HYPE from a brand-new
+testnet EOA (no mainnet history, never on Core) to the HYPE system address <code>0x2222...2222</code>. The
+testnet ledger recorded it at once. The info API still showed the address as <code>missing</code> with no
+balance, because the address had no Core account. When another wallet sent the EOA a little USDC on Core,
+the account was created and the 0.01 HYPE was already there. From then on HYPE moved both ways within seconds.</p>
+<p>So for testnet EOAs that hold assets on HyperEVM and have never touched Core: have any wallet with testnet
+Core USDC send each one a small amount on Core (the sender pays a 1 USDC new-account fee). After that, HYPE
+moves freely between HyperEVM and Core. USDC through testnet <code>depositFor</code> still does not work for
+them, so move USDC with Core-side sends.</p>
+
+<figure>
+<svg viewBox="0 0 720 250" role="img" aria-labelledby="f5t">
+  <title id="f5t">Native HYPE from a new EOA: held until the Core account exists, then moves both ways.</title>
+  <text x="20" y="22" class="title t-evm">HyperEVM testnet</text>
+  <text x="380" y="22" class="title t-core">HyperCore testnet</text>
+  <line x1="360" y1="10" x2="360" y2="240" class="lane"/>
+
+  <rect x="20" y="40" width="300" height="56" rx="6" class="evm"/>
+  <text x="32" y="62" class="label">New EOA sends 0.01 HYPE</text>
+  <text x="32" y="80" class="mono">to 0x2222...2222</text>
+
+  <rect x="400" y="40" width="300" height="56" rx="6" class="plain"/>
+  <text x="412" y="62" class="label">Recorded, but no Core account yet</text>
+  <text x="412" y="80" class="small">info API: userRole missing, balance 0</text>
+
+  <rect x="400" y="112" width="300" height="56" rx="6" class="core"/>
+  <text x="412" y="134" class="label">Another wallet sends 0.5 USDC on Core</text>
+  <text x="412" y="152" class="small">creates the account; sender pays 1 USDC fee</text>
+
+  <rect x="400" y="184" width="300" height="50" rx="6" class="ok"/>
+  <text x="412" y="205" class="label t-ok">0.01 HYPE visible, account active</text>
+  <text x="412" y="223" class="small">later transfers land in seconds</text>
+
+  <rect x="20" y="184" width="300" height="50" rx="6" class="ok"/>
+  <text x="32" y="205" class="label t-ok">HYPE moves both ways</text>
+  <text x="32" y="223" class="small">EVM to Core, and Core to EVM via spotSend</text>
+
+  <path d="M320,68 L396,68" class="arrow"/>
+  <path d="M550,96 L550,108" class="arrow"/>
+  <path d="M550,168 L550,180" class="arrow-ok"/>
+  <path d="M400,209 L324,209" class="arrow-ok"/>
+</svg>
+<figcaption>Figure 5. Native HYPE is not gated on mainnet state. It only needs the Core account to exist.</figcaption>
+</figure>
+
+<h2>Live results</h2>
+<p>The factory is at <code>0x3A1dfE1132646A32A6D68326cA5baC226Bd5514e</code> on both chains. The test user is
+<code>0x76198E1AC0e47c046Ed233f66B6033CBB4f82F6D</code>, and its deposit address is
+<code>0xD4808d726a073292c2B4AF2C454586DabFa9b160</code> on both chains.</p>
+
+<div class="table-wrap">
+<table>
+<tr><th>Testnet step</th><th>Tx</th></tr>
+<tr><td>Deploy factory (big block)</td><td><a href="https://testnet.purrsec.com/tx/0x7ef61d82c807fd4544b7a9a8853518f6572716579ec9614f9db732fe6b922737">0x7ef61d82</a></td></tr>
+<tr><td>Core send 15 USDC before code existed (sender paid 1 USDC new-account fee)</td><td><a href="https://app.hyperliquid-testnet.xyz/explorer/tx/0xa026d0473385fba7a1a0042ab7aa83010100e82cce891a7943ef7b99f289d592">Core 0xa026d047</a></td></tr>
+<tr><td>Deploy deposit address</td><td><a href="https://testnet.purrsec.com/tx/0x71f8b5b9ac3a3527db84e6fdd9224fad82e6fc8f5caccfccbce3e9611578f637">0x71f8b5b9</a></td></tr>
+<tr><td>Activation in, out, confirm</td><td><a href="https://app.hyperliquid-testnet.xyz/explorer/tx/0xc817426cf2534371c990042ab7ac5a0103005a528d5662436bdfedbfb1571d5c">Core in</a>, <a href="https://testnet.purrsec.com/tx/0x8ff1f509dcb4ce39f40bad70f65704591c2a0d027d436e9b5ebfa5c33f306410">begin</a>, <a href="https://app.hyperliquid-testnet.xyz/explorer/tx/0xca9d518b676e4c9ecc17042ab7aca60000d8697102616b706e65fcde26622689">Core out</a>, <a href="https://testnet.purrsec.com/tx/0x1b800c2ab7ba86959f64b3fa453b8c6ef5ffdc5781a8b7cfc7b7e7c145b97875">confirm</a></td></tr>
+<tr><td>HYPE limit buy, filled 0.4 at 31.658</td><td><a href="https://testnet.purrsec.com/tx/0x774e53595619a091784f283ad2833ac681d247853116cedcea53d1a2ba7741cf">0x774e5359</a>, <a href="https://app.hyperliquid-testnet.xyz/explorer/tx/0x0d036d7c846f6d9d0e7d042ab7bab600003e85621f628c6fb0cc18cf43634787">Core fill</a></td></tr>
+<tr><td>Sweep 2.3368 USDC, then credit</td><td><a href="https://testnet.purrsec.com/tx/0x7ccd37b8d3ba6d29398d36ed7426ab2e32b93d18cba80e4c4d9a81588a6965b9">sweep</a>, <a href="https://app.hyperliquid-testnet.xyz/explorer/tx/0xea311837fdee369aebaa042ab7be2e00006c301d98e1556c8df9c38abce21085">Core</a>, <a href="https://testnet.purrsec.com/tx/0x1bd05ed7e43a90e4b5819ed466dc6082de7e554402db832fb7f5a9e4bf8f9d05">confirm</a></td></tr>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>Mainnet step</th><th>Tx</th></tr>
+<tr><td>Seed 2 USDC on Core (plus 1 USDC new-account fee)</td><td><a href="https://app.hyperliquid.xyz/explorer/tx/0x50773ed7e30786a951f00445aaff3802017000bd7e0aa57bf43fea2aa20b6093">Core 0x50773ed7</a></td></tr>
+<tr><td>Deploy factory, same address</td><td><a href="https://hyperevmscan.io/tx/0x382c79ae8405746d40d8707848fdcd21cf34354a1775216a872689eafcacea68">0x382c79ae</a></td></tr>
+<tr><td>Deploy replica, add API wallet <code>0x5438...F164</code></td><td><a href="https://hyperevmscan.io/tx/0xe83eb43437807cd40db583e0b468415ada8fcfa25c93f00baa2a1a3f0cfe6d64">0xe83eb434</a></td></tr>
+<tr><td>Return seed through CoreWriter</td><td><a href="https://hyperevmscan.io/tx/0x1e5c4a083715431badb58e68f6da2624731a16937fcbf5905d9234b864216f8e">0x1e5c4a08</a></td></tr>
+<tr><td>Bridge 5 USDC with depositFor to the deposit address (credited 5.0)</td><td><a href="https://hyperevmscan.io/tx/0x53be4b4430bb784e3e1220b0b6f214332edf66456aae77ddf3c1ac58449be761">0x53be4b44</a></td></tr>
+<tr><td>Bridge 5 USDC with depositFor to a new EOA (credited 4.0 after 1 USDC activation fee)</td><td><a href="https://hyperevmscan.io/tx/0x05c04cfec87097c69e2fffa2e9d180c5dde37d087a5d64cac14ef24873d98070">0x05c04cfe</a></td></tr>
+<tr><td>Return 5 USDC seed, and 4 USDC from the EOA</td><td><a href="https://hyperevmscan.io/tx/0xf8e2a7e5eaf099e6d67e2b2cbe64c08e98b85f0a5d27878733808ac04c55147c">0xf8e2a7e5</a>, <a href="https://app.hyperliquid.xyz/explorer/tx/0xd1c1b11e7baa3b07d33b0445bf69710202ad000416ad59d9758a5c713aae14f2">Core 0xd1c1b11e</a></td></tr>
+</table>
+</div>
+
+<div class="table-wrap">
+<table>
+<tr><th>Testnet depositFor recipient</th><th>Mainnet state</th><th>Result</th></tr>
+<tr><td>Deposit address</td><td>none</td><td class="no">not credited</td></tr>
+<tr><td>Deposit address</td><td>Core seed, replica, API wallet, API wallet L1 action</td><td class="no">not credited</td></tr>
+<tr><td>New EOA</td><td>Core send minutes earlier</td><td class="no">not credited</td></tr>
+<tr><td>Deposit address</td><td>plus mainnet bridge deposit: +5 min, +40 min, about +24 h</td><td class="no">not credited</td></tr>
+<tr><td>New EOA</td><td>mainnet bridge deposit: +5 min; +16 min and about +24 h with a testnet Core account</td><td class="no">not credited</td></tr>
+<tr><td>New HYPE EOA</td><td>none, testnet Core account</td><td class="no">not credited</td></tr>
+<tr><td>Old wallet</td><td>long history</td><td class="yes">credited in seconds</td></tr>
+</table>
+</div>
+
+<p>Mainnet cost for all of this was 3 USDC in new-account fees and about 0.0005 HYPE of gas. All principal was
+sent back. Full transaction lists, including every testnet depositFor attempt and the HYPE test, are in the
+README.</p>
+
+<h2>Caveats</h2>
+<p>This is crude testnet code and has not been audited. The first transfer to any new Core address costs the
+sender 1 USDC, so the sweep target must already exist on Core or the sweep is rejected and the deposit
+address stays locked. Accounts in unified-account mode reject <code>spotSend</code>; the scripts fall back to
+<code>sendAsset</code>. API wallets cannot move funds out of an account, because transfers are user-signed
+and move the signer's own funds.</p>
+
+<footer>
+MIT licensed. Source, scripts and tests:
+<a href="https://github.com/trajan0x/hyperliquid-testnet-workaround-example">github.com/trajan0x/hyperliquid-testnet-workaround-example</a>.
+Hyperliquid references:
+<a href="https://hyperliquid.gitbook.io/hyperliquid-docs/for-developers/hyperevm/interacting-with-hypercore">Interacting with HyperCore</a>.
+</footer>
+</main>
+</body>
+</html>

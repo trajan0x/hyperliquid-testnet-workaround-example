@@ -1,0 +1,8 @@
+out/
+cache/
+broadcast/
+.env
+__pycache__/
+.venv/
+key
+*.key
